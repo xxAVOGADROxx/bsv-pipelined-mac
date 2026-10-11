@@ -1,0 +1,10 @@
+package MacTooNarrow where
+
+-- int16 operands give 32-bit products, which do not fit a 24-bit
+-- accumulator. The provisos on mkMac must make this fail to compile;
+-- `make reject` checks that bsc refuses it.
+
+import Mac
+
+mkMacTooNarrow :: Module (Mac_IFC 16 24)
+mkMacTooNarrow = mkMac

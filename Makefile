@@ -1,5 +1,6 @@
 # Build and test with the open-source Bluespec compiler (bsc):
-#   make test      compile, link and run every Bluesim testbench
+#   make test      compile, link and run every Bluesim testbench, and
+#                  check that ill-typed designs are rejected
 #   make verilog   generate Verilog for the synthesizable instances
 #   make report    synthesize them with Yosys; print cells and flops
 
@@ -19,13 +20,15 @@ BSC_VLIB := $(dir $(shell which $(BSC)))../lib/Verilog
 
 SRCS := $(wildcard src/*.bs) test/TbUtils.bs
 
-.PHONY: all test verilog synth report clean
+REJECT  := $(wildcard test/reject/*.bs)
+
+.PHONY: all test reject verilog synth report clean
 .DELETE_ON_ERROR:
 .PRECIOUS: $(BUILD)/sim/%.exe
 
 all: test report
 
-test: $(TESTS:%=$(BUILD)/%.log)
+test: $(TESTS:%=$(BUILD)/%.log) reject
 
 # A test passes only if the simulation printed a line that is exactly PASS.
 $(BUILD)/%.log: $(BUILD)/sim/%.exe
@@ -36,6 +39,18 @@ $(BUILD)/sim/%.exe: test/%.bs $(SRCS)
 	@mkdir -p $(BUILD)/sim
 	$(BSC) -u -sim $(BSC_FLAGS) -bdir $(BUILD)/sim -simdir $(BUILD)/sim -info-dir $(BUILD)/sim -g mk$* $<
 	$(BSC) -sim -e mk$* -o $@ $(BSC_FLAGS) -bdir $(BUILD)/sim -simdir $(BUILD)/sim
+
+# Each file in test/reject/ instantiates a design with invalid type
+# parameters. The test passes only if bsc refuses to compile it.
+reject:
+	@mkdir -p $(BUILD)/reject
+	@for f in $(REJECT); do \
+	  if $(BSC) -u -sim $(BSC_FLAGS) -bdir $(BUILD)/reject $$f > $(BUILD)/reject.log 2>&1; then \
+	    echo "FAIL: $$f compiled but should have been rejected"; exit 1; \
+	  else \
+	    echo "PASS: $$f rejected"; grep -A4 '^Error' $(BUILD)/reject.log; \
+	  fi; \
+	done
 
 verilog: $(MODULES:%=$(VERILOG)/%.v)
 
