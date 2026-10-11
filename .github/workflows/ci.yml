@@ -12,12 +12,27 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install bsc
+      - name: Install bsc and Yosys
         run: |
           mkdir -p "$RUNNER_TEMP/bsc"
           curl -fsSL "https://github.com/B-Lang-org/bsc/releases/download/${BSC_VERSION}/bsc-${BSC_VERSION}-ubuntu-24.04.tar.gz" \
             | tar -xz --strip-components=1 -C "$RUNNER_TEMP/bsc"
           echo "$RUNNER_TEMP/bsc/bin" >> "$GITHUB_PATH"
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq yosys
 
       - name: Bluesim tests
         run: make test
+
+      - name: Generate Verilog
+        run: make verilog
+
+      - name: Synthesize with Yosys
+        run: make report
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: verilog-and-synth-reports
+          path: |
+            verilog/
+            build/*.stat
