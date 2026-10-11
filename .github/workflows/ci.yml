@@ -1,0 +1,23 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    env:
+      BSC_VERSION: 2026.07.1
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install bsc
+        run: |
+          mkdir -p "$RUNNER_TEMP/bsc"
+          curl -fsSL "https://github.com/B-Lang-org/bsc/releases/download/${BSC_VERSION}/bsc-${BSC_VERSION}-ubuntu-24.04.tar.gz" \
+            | tar -xz --strip-components=1 -C "$RUNNER_TEMP/bsc"
+          echo "$RUNNER_TEMP/bsc/bin" >> "$GITHUB_PATH"
+
+      - name: Bluesim tests
+        run: make test
