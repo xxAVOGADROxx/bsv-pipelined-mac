@@ -1,0 +1,61 @@
+package Mac where
+
+-- ================================================================
+-- A pipelined, width-parameterized multiply-accumulate (MAC) unit.
+--
+-- Operand pairs stream in through 'put'. The 'isLast' flag closes the
+-- current dot product, whose sum then appears on 'get'. The unit accepts
+-- one operand pair per cycle (initiation interval = 1):
+--
+--     put --> [inQ] --rl_multiply--> [mulQ] --rl_accumulate--> [outQ] --> get
+--
+-- Widths are type parameters: n_in-bit signed operands and an n_acc-bit
+-- signed accumulator. The provisos make the type checker prove that a
+-- full product (2 * n_in bits) fits in the accumulator, so an instance
+-- that would silently truncate products is rejected at compile time.
+-- ================================================================
+
+import FIFOF
+
+interface (Mac_IFC :: # -> # -> *) n_in n_acc =
+    put :: Int n_in -> Int n_in -> Bool -> Action
+    get :: ActionValue (Int n_acc)
+
+mkMac :: (Add n_in n_in n_prod, Add n_prod n_pad n_acc)
+      => Module (Mac_IFC n_in n_acc)
+mkMac =
+  module
+    inQ  :: FIFOF (Int n_in, Int n_in, Bool) <- mkFIFOF
+    mulQ :: FIFOF (Int n_prod, Bool)         <- mkFIFOF
+    outQ :: FIFOF (Int n_acc)                <- mkFIFOF
+
+    acc :: Reg (Int n_acc) <- mkReg 0
+
+    rules
+      -- Stage 1: the multiplier is exactly 2 * n_in bits wide, not
+      -- n_acc bits, which keeps it as small as the operands allow.
+      "rl_multiply": when True
+       ==> do
+              let (x, y, isLast) = inQ.first
+              inQ.deq
+              mulQ.enq (signExtend x * signExtend y, isLast)
+
+      -- Stage 2: accumulate, and on the last term emit and clear.
+      "rl_accumulate": when True
+       ==> do
+              let (p, isLast) = mulQ.first
+                  accNext     = acc + signExtend p
+              mulQ.deq
+              if isLast
+                then do
+                  outQ.enq accNext
+                  acc := 0
+                else
+                  acc := accNext
+
+    interface
+      put x y isLast = inQ.enq (x, y, isLast)
+
+      get = do
+              outQ.deq
+              return outQ.first

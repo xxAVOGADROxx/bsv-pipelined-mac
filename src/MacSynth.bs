@@ -1,0 +1,16 @@
+package MacSynth where
+
+-- ================================================================
+-- Concrete instances of the polymorphic modules. Polymorphic modules
+-- cannot be synthesized on their own, so these fix the type parameters
+-- and become separate Verilog modules. The testbenches use these same
+-- instances, so the tested hardware is the hardware that gets generated.
+-- ================================================================
+
+import Mac
+
+-- int8 operands, int32 accumulator
+{-# verilog mkMac_8x32 #-}
+mkMac_8x32 :: Module (Mac_IFC 8 32)
+mkMac_8x32 = mkMac
+
