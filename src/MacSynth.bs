@@ -8,9 +8,14 @@ package MacSynth where
 -- ================================================================
 
 import Mac
+import DotProduct
 
 -- int8 operands, int32 accumulator
 {-# verilog mkMac_8x32 #-}
 mkMac_8x32 :: Module (Mac_IFC 8 32)
 mkMac_8x32 = mkMac
 
+-- 8 lanes of int8, int32 result
+{-# verilog mkDotProduct_8x8x32 #-}
+mkDotProduct_8x8x32 :: Module (DotProduct_IFC 8 8 32)
+mkDotProduct_8x8x32 = mkDotProduct

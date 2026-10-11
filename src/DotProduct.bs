@@ -1,0 +1,52 @@
+package DotProduct where
+
+-- ================================================================
+-- An N-lane dot-product engine: one pair of length-N vectors per cycle.
+--
+--     put --> [inQ] --rl_multiply--> [prodQ] --rl_reduce--> [outQ] --> get
+--
+-- rl_multiply instantiates N multipliers side by side; rl_reduce sums the
+-- N products with Vector.fold, which elaborates to a balanced adder tree
+-- of depth log2(N). Lanes and widths are all type parameters, so the
+-- same source elaborates to a 4-lane or a 64-lane engine.
+-- ================================================================
+
+import FIFOF
+import Vector
+
+interface (DotProduct_IFC :: # -> # -> # -> *) n_lanes n_in n_acc =
+    put :: Vector n_lanes (Int n_in) -> Vector n_lanes (Int n_in) -> Action
+    get :: ActionValue (Int n_acc)
+
+mkDotProduct :: (Add 1 n_lanes_m1 n_lanes,       -- at least one lane
+                 Add n_in n_in n_prod,
+                 Add n_prod n_pad n_acc)         -- products fit the accumulator
+             => Module (DotProduct_IFC n_lanes n_in n_acc)
+mkDotProduct =
+  module
+    inQ   :: FIFOF (Vector n_lanes (Int n_in), Vector n_lanes (Int n_in)) <- mkFIFOF
+    prodQ :: FIFOF (Vector n_lanes (Int n_acc))                           <- mkFIFOF
+    outQ  :: FIFOF (Int n_acc)                                            <- mkFIFOF
+
+    let mul :: Int n_in -> Int n_in -> Int n_acc
+        mul x y = let p :: Int n_prod = signExtend x * signExtend y
+                  in  signExtend p
+
+    rules
+      "rl_multiply": when True
+       ==> do
+              let (xs, ys) = inQ.first
+              inQ.deq
+              prodQ.enq (Vector.zipWith mul xs ys)
+
+      "rl_reduce": when True
+       ==> do
+              prodQ.deq
+              outQ.enq (Vector.fold (+) prodQ.first)
+
+    interface
+      put xs ys = inQ.enq (xs, ys)
+
+      get = do
+              outQ.deq
+              return outQ.first

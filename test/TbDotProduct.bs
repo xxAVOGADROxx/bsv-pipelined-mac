@@ -1,0 +1,94 @@
+package TbDotProduct where
+
+-- ================================================================
+-- Self-checking testbench for mkDotProduct_8x8x32.
+--
+-- Streams numVecs pairs of 8-lane vectors, one pair per cycle, and checks
+-- every result against a reference model and the 1 vector/cycle
+-- throughput. Prints PASS or FAIL.
+-- ================================================================
+
+import FIFOF
+import List
+import Vector
+
+import DotProduct
+import MacSynth
+import TbUtils
+
+type Lanes = 8
+
+numVecs :: Integer
+numVecs = 512
+
+-- Reference model: an index-by-index loop at accumulator width, unlike
+-- the DUT's zipWith + adder tree.
+goldenDot :: Vector Lanes (Int 8) -> Vector Lanes (Int 8) -> Int 32
+goldenDot xs ys =
+    List.foldl (\acc i -> acc + signExtend (xs !! i) * signExtend (ys !! i))
+               0
+               (List.upto 0 (valueOf Lanes - 1))
+
+-- Lane i of a pseudo-random vector derived from seed s.
+lane :: Bit 32 -> Integer -> Int 8
+lane s i = unpack (truncate (xorshift32 (s + fromInteger i) >> 8))
+
+{-# verilog mkTbDotProduct #-}
+mkTbDotProduct :: Module Empty
+mkTbDotProduct =
+  module
+    dut :: DotProduct_IFC Lanes 8 32 <- mkDotProduct_8x8x32
+
+    cycles  :: Reg (UInt 32) <- mkReg 0
+    seed    :: Reg (Bit 32)  <- mkReg 1
+    vecIn   :: Reg (UInt 16) <- mkReg 0
+    expectQ :: FIFOF (Int 32) <- mkSizedFIFOF 16
+    vecOut  :: Reg (UInt 16) <- mkReg 0
+    errors  :: Reg (UInt 16) <- mkReg 0
+
+    let nVecs :: UInt 16 = fromInteger numVecs
+        nVecs32 :: UInt 32 = fromInteger numVecs
+
+        -- Corner cases first: all-extreme vectors maximize the magnitude
+        -- of every product and of the final sum.
+        xs :: Vector Lanes (Int 8)
+        xs = if      vecIn == 0 then Vector.replicate minBound
+             else if vecIn == 1 then Vector.replicate maxBound
+             else Vector.genWith (lane seed)
+
+        ys :: Vector Lanes (Int 8)
+        ys = if vecIn < 2 then Vector.replicate minBound
+             else Vector.genWith (lane (xorshift32 (seed ^ 0xA5A5A5A5)))
+
+    rules
+      "rl_count_cycles": when True
+       ==> cycles := cycles + 1
+
+      "rl_feed": when (vecIn < nVecs)
+       ==> do
+              dut.put xs ys
+              expectQ.enq (goldenDot xs ys)
+              seed  := xorshift32 seed
+              vecIn := vecIn + 1
+
+      "rl_check": when True
+       ==> do
+              got <- dut.get
+              let want = expectQ.first
+              expectQ.deq
+              if got /= want
+                then do
+                  $display "FAIL vec %0d: got %0d, expected %0d" vecOut got want
+                  errors := errors + 1
+                else noAction
+              vecOut := vecOut + 1
+
+      "rl_done": when (vecOut == nVecs)
+       ==> do
+              $display "TbDotProduct: %0d vectors, %0d cycles" vecOut cycles
+              if errors /= 0
+                then $display "FAIL: %0d mismatches" errors
+                else if cycles > nVecs32 + 8
+                then $display "FAIL: throughput below 1 vector/cycle"
+                else $display "PASS"
+              $finish

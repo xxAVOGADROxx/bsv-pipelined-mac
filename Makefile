@@ -5,7 +5,7 @@ BSC   ?= bsc
 
 BUILD   := build
 
-TESTS   := TbMac
+TESTS   := TbMac TbDotProduct
 
 BSC_FLAGS := -aggressive-conditions -check-assert -p src:test:+
 
