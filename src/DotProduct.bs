@@ -7,8 +7,12 @@ package DotProduct where
 --
 -- rl_multiply instantiates N multipliers side by side; rl_reduce sums the
 -- N products with Vector.fold, which elaborates to a balanced adder tree
--- of depth log2(N). Lanes and widths are all type parameters, so the
--- same source elaborates to a 4-lane or a 64-lane engine.
+-- of depth log2(N). Products cross the stage boundary at their natural
+-- 2 * n_in width and are sign-extended only inside the adder tree, which
+-- keeps the prodQ pipeline register as narrow as possible.
+--
+-- Lanes and widths are all type parameters, so the same source
+-- elaborates to a 4-lane or a 64-lane engine.
 -- ================================================================
 
 import FIFOF
@@ -25,12 +29,14 @@ mkDotProduct :: (Add 1 n_lanes_m1 n_lanes,       -- at least one lane
 mkDotProduct =
   module
     inQ   :: FIFOF (Vector n_lanes (Int n_in), Vector n_lanes (Int n_in)) <- mkFIFOF
-    prodQ :: FIFOF (Vector n_lanes (Int n_acc))                           <- mkFIFOF
+    prodQ :: FIFOF (Vector n_lanes (Int n_prod))                          <- mkFIFOF
     outQ  :: FIFOF (Int n_acc)                                            <- mkFIFOF
 
-    let mul :: Int n_in -> Int n_in -> Int n_acc
-        mul x y = let p :: Int n_prod = signExtend x * signExtend y
-                  in  signExtend p
+    let mul :: Int n_in -> Int n_in -> Int n_prod
+        mul x y = signExtend x * signExtend y
+
+        widen :: Int n_prod -> Int n_acc
+        widen = signExtend
 
     rules
       "rl_multiply": when True
@@ -42,7 +48,7 @@ mkDotProduct =
       "rl_reduce": when True
        ==> do
               prodQ.deq
-              outQ.enq (Vector.fold (+) prodQ.first)
+              outQ.enq (Vector.fold (+) (Vector.map widen prodQ.first))
 
     interface
       put xs ys = inQ.enq (xs, ys)
