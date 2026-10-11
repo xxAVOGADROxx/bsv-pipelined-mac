@@ -1,0 +1,13 @@
+package TbUtils where
+
+-- ================================================================
+-- Shared testbench helpers.
+-- ================================================================
+
+-- xorshift32 (Marsaglia, 2003): a cheap PRNG that cycles through every
+-- nonzero 32-bit state. Deterministic, so a failing run reproduces.
+xorshift32 :: Bit 32 -> Bit 32
+xorshift32 s0 =
+    let s1 = s0 ^ (s0 << 13)
+        s2 = s1 ^ (s1 >> 17)
+    in  s2 ^ (s2 << 5)

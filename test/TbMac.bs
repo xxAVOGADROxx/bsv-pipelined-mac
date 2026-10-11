@@ -1,0 +1,99 @@
+package TbMac where
+
+-- ================================================================
+-- Self-checking testbench for mkMac_8x32.
+--
+-- Streams numDots dot products of DotLen terms each, one term per cycle,
+-- while a reference model computes the expected sums. Checks:
+--   * every result matches the reference model, and
+--   * throughput: all terms finish within numTerms + a small pipeline
+--     fill, i.e. the MAC really sustains one term per cycle.
+-- Prints PASS or FAIL; the Makefile turns that into an exit status.
+-- ================================================================
+
+import FIFOF
+
+import Mac
+import MacSynth
+import TbUtils
+
+type DotLen = 8
+
+numDots :: Integer
+numDots = 256
+
+-- Reference model for one MAC step, written directly at accumulator
+-- width (no intermediate product width), so it does not share the
+-- DUT's structure or its potential bugs.
+goldenStep :: Int 32 -> Int 8 -> Int 8 -> Int 32
+goldenStep acc x y = acc + signExtend x * signExtend y
+
+{-# verilog mkTbMac #-}
+mkTbMac :: Module Empty
+mkTbMac =
+  module
+    dut :: Mac_IFC 8 32 <- mkMac_8x32
+
+    cycles  :: Reg (UInt 32) <- mkReg 0
+    seed    :: Reg (Bit 32)  <- mkReg 1
+    dotIn   :: Reg (UInt 16) <- mkReg 0     -- dot products fed so far
+    term    :: Reg (UInt 8)  <- mkReg 0     -- term index in current dot product
+    golden  :: Reg (Int 32)  <- mkReg 0     -- reference accumulator
+    expectQ :: FIFOF (Int 32) <- mkSizedFIFOF 16
+    dotOut  :: Reg (UInt 16) <- mkReg 0     -- dot products checked so far
+    errors  :: Reg (UInt 16) <- mkReg 0
+
+    let lastTerm :: UInt 8  = fromInteger (valueOf DotLen - 1)
+        nDots    :: UInt 16 = fromInteger numDots
+        nTerms   :: UInt 32 = fromInteger (numDots * valueOf DotLen)
+
+        -- Corner cases first, then pseudo-random operands.
+        operands :: (Int 8, Int 8)
+        operands =
+            if      dotIn == 0 then (minBound, minBound)  -- largest positive product
+            else if dotIn == 1 then (minBound, maxBound)  -- most negative product
+            else if dotIn == 2 then (maxBound, maxBound)
+            else (unpack (truncate seed), unpack (truncate (seed >> 8)))
+
+    rules
+      "rl_count_cycles": when True
+       ==> cycles := cycles + 1
+
+      "rl_feed": when (dotIn < nDots)
+       ==> do
+              let (x, y)  = operands
+                  isLast  = term == lastTerm
+                  accNext = goldenStep golden x y
+              dut.put x y isLast
+              seed := xorshift32 seed
+              if isLast
+                then do
+                  expectQ.enq accNext
+                  golden := 0
+                  term   := 0
+                  dotIn  := dotIn + 1
+                else do
+                  golden := accNext
+                  term   := term + 1
+
+      "rl_check": when True
+       ==> do
+              got <- dut.get
+              let want = expectQ.first
+              expectQ.deq
+              if got /= want
+                then do
+                  $display "FAIL dot %0d: got %0d, expected %0d" dotOut got want
+                  errors := errors + 1
+                else noAction
+              dotOut := dotOut + 1
+
+      "rl_done": when (dotOut == nDots)
+       ==> do
+              $display "TbMac: %0d dot products, %0d terms, %0d cycles" dotOut nTerms cycles
+              if errors /= 0
+                then $display "FAIL: %0d mismatches" errors
+                else if cycles > nTerms + 8
+                then $display "FAIL: throughput below 1 term/cycle"
+                else $display "PASS"
+              $finish
